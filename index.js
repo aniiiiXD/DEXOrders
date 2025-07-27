@@ -29,7 +29,13 @@ const orderQuotes = new Map();       // orderId -> {quotes: [], bestQuote}
 function sendUpdate(orderId, message) {
   const socket = activeConnections.get(orderId);
   if (socket && socket.readyState === socket.OPEN) {
-    socket.send(JSON.stringify(message));
+    try {
+      socket.send(JSON.stringify(message));
+    } catch (error) {
+      console.error(`[WebSocket] Error sending message to ${orderId}:`, error);
+      // Clean up dead connection
+      activeConnections.delete(orderId);
+    }
   }
 }
 
@@ -248,8 +254,20 @@ fastify.post('/api/orders', async (req, reply) => {
     return reply.status(400).send({ error: 'Valid wallet with balances is required' });
   }
 
-  // Validate routing strategy
+  // Validate routing strategy with safety checks
+  if (!routingHub || !routingHub.routingStrategies) {
+    return reply.status(500).send({ 
+      error: 'Routing hub initialization failed' 
+    });
+  }
+
   const availableStrategies = Object.keys(routingHub.routingStrategies);
+  if (availableStrategies.length === 0) {
+    return reply.status(500).send({ 
+      error: 'No routing strategies available' 
+    });
+  }
+
   if (!availableStrategies.includes(routingStrategy)) {
     return reply.status(400).send({ 
       error: `Invalid routing strategy. Available: ${availableStrategies.join(', ')}` 
@@ -288,15 +306,32 @@ fastify.post('/api/orders', async (req, reply) => {
       userPreferences
     });
 
-    // Send initial WS update
-    sendUpdate(orderId, {
-      type: 'order_update',
-      orderId,
-      status: 'pending',
-      stage: 'getting_quotes',
-      message: 'Fetching quotes from all DEXs...',
-      timestamp: new Date().toISOString(),
+    // Store order data first
+    orderJobMap.set(orderId, {
+      jobIds: [],
+      tokenPair,
+      inputAmount,
+      wallet,
+      routingStrategy,
+      userPreferences,
+      startTime: new Date()
     });
+
+    // Add a small delay before sending initial update to ensure WebSocket connection
+    setTimeout(() => {
+      // Only send update if WebSocket connection exists
+      const socket = activeConnections.get(orderId);
+      if (socket && socket.readyState === socket.OPEN) {
+        sendUpdate(orderId, {
+          type: 'order_update',
+          orderId,
+          status: 'pending',
+          stage: 'getting_quotes',
+          message: 'Fetching quotes from all DEXs...',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }, 100);
 
   } catch (error) {
     console.error(`[Order ${orderId}] Error starting order:`, error);
@@ -305,28 +340,57 @@ fastify.post('/api/orders', async (req, reply) => {
 });
 
 // WebSocket for order updates
-fastify.get('/ws/:orderId', { websocket: true }, (connection, req) => {
-  const { orderId } = req.params;
-  console.log(`[WebSocket] Client connected for orderId: ${orderId}`);
+fastify.get('/ws/:orderId', { websocket: true }, (connection, req, reply) => {
+  try {
+    const { orderId } = req.params;
+    
+    // Validate orderId
+    if (!orderId) {
+      return reply.status(400).send({ error: 'Invalid orderId' });
+    }
 
-  activeConnections.set(orderId, connection.socket);
+    // Check if order exists
+    if (!orderJobMap.has(orderId)) {
+      return reply.status(404).send({ error: 'Order not found' });
+    }
 
-  connection.socket.send(JSON.stringify({
-    type: 'connected',
-    orderId,
-    message: 'WebSocket connection established. Monitoring order progress.',
-    timestamp: new Date().toISOString()
-  }));
+    console.log(`[WebSocket] Client connected for orderId: ${orderId}`);
 
-  connection.socket.on('close', () => {
-    console.log(`[WebSocket] Connection closed for orderId: ${orderId}`);
-    activeConnections.delete(orderId);
-  });
+    // Validate connection
+    if (!connection || !connection.socket) {
+      return reply.status(500).send({ error: 'WebSocket connection failed' });
+    }
 
-  connection.socket.on('error', (err) => {
-    console.log(`[WebSocket] Error on connection for orderId: ${orderId}`, err);
-    activeConnections.delete(orderId);
-  });
+    // Check if connection already exists
+    if (activeConnections.has(orderId)) {
+      return reply.status(400).send({ error: 'WebSocket connection already exists' });
+    }
+
+    activeConnections.set(orderId, connection.socket);
+
+    connection.socket.send(JSON.stringify({
+      type: 'connected',
+      orderId,
+      message: 'WebSocket connection established. Monitoring order progress.',
+      timestamp: new Date().toISOString()
+    }));
+
+    connection.socket.on('close', () => {
+      console.log(`[WebSocket] Connection closed for orderId: ${orderId}`);
+      activeConnections.delete(orderId);
+    });
+
+    connection.socket.on('error', (err) => {
+      console.error(`[WebSocket] Error on connection for orderId: ${orderId}`, err);
+      activeConnections.delete(orderId);
+    });
+  } catch (error) {
+    console.error(`[WebSocket] Connection setup failed:`, error);
+    if (connection && connection.socket) {
+      connection.socket.close();
+    }
+    return reply.status(500).send({ error: 'WebSocket connection setup failed' });
+  }
 });
 
 // Health check endpoint
@@ -345,7 +409,21 @@ fastify.get('/api/health', async (req, reply) => {
 
 // Get routing strategies
 fastify.get('/api/routing-strategies', async (req, reply) => {
-  reply.send(routingHub.getAvailableStrategies());
+  const strategies = routingHub.getAvailableStrategies();
+  
+  // Convert to array format if needed
+  if (Array.isArray(strategies)) {
+    reply.send(strategies);
+  } else {
+    // Convert object format to array format
+    const strategyArray = strategies.strategies.map(strategy => ({
+      name: strategy,
+      description: strategies.descriptions[strategy],
+      isDefault: strategy === strategies.default
+    }));
+    
+    reply.send(strategyArray);
+  }
 });
 
 // Get order status
@@ -463,3 +541,4 @@ fastify.listen({ port: 3000 }, (err) => {
   console.log('[Server] 🔌 WebSocket endpoints ready for order tracking');
   console.log('[Server] 🎯 Available strategies:', Object.keys(routingHub.routingStrategies).join(', '));
 });
+  
