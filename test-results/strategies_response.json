@@ -1,0 +1,1 @@
+{"strategies":["BEST_PRICE","LOWEST_SLIPPAGE","HIGHEST_LIQUIDITY","FASTEST_EXECUTION"],"default":"BEST_PRICE","descriptions":{"BEST_PRICE":"Selects DEX with highest output amount","LOWEST_SLIPPAGE":"Selects DEX with lowest price impact","HIGHEST_LIQUIDITY":"Selects DEX with highest liquidity","FASTEST_EXECUTION":"Selects fastest DEX for execution"}}

@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEX Routing System Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3a 100%);
+            min-height: 100vh;
+            overflow-x: auto;
+            color: white;
+        }
+
+        .container {
+            width: 100%;
+            min-width: 1400px;
+            padding: 20px;
+            position: relative;
+        }
+
+        .title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 40px;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gradientShift 4s ease-in-out infinite;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .system-layer {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 60px;
+            position: relative;
+        }
+
+        .component-group {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            margin: 0 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            min-width: 250px;
+        }
+
+        .component-group:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .group-title {
+            font-size: 1.4rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .component {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            margin: 10px 0;
+            border-radius: 12px;
+            text-align: center;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+
+        .component:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .component.active {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+
+        /* Component type specific colors */
+        .client { background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); }
+        .server { background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); }
+        .queue { background: linear-gradient(135deg, #d299c2 0%, #fef9d7 100%); }
+        .worker { background: linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%); }
+        .hub { background: linear-gradient(135deg, #fdbb2d 0%, #22c1c3 100%); }
+
+        /* Connection lines */
+        .connection {
+            position: absolute;
+            height: 2px;
+            background: linear-gradient(90deg, #00d4ff, #ff00ff);
+            z-index: -1;
+            opacity: 0.7;
+            transition: all 0.3s ease;
+        }
+
+        .connection::before {
+            content: '';
+            position: absolute;
+            top: -3px;
+            right: -6px;
+            width: 0;
+            height: 0;
+            border-left: 8px solid #ff00ff;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+        }
+
+        .connection.active {
+            height: 4px;
+            box-shadow: 0 0 10px #00d4ff;
+            animation: flow 2s linear infinite;
+        }
+
+        @keyframes flow {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 100% 50%; }
+        }
+
+        /* Responsive layout */
+        .layer-1 { justify-content: center; }
+        .layer-2 { justify-content: space-around; }
+        .layer-3 { justify-content: space-between; }
+        .layer-4 { justify-content: space-between; }
+        .layer-5 { justify-content: center; }
+
+        /* Flow indicators */
+        .flow-indicator {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: radial-gradient(circle, #00ff88, #0099ff);
+            border-radius: 50%;
+            animation: flowMove 3s linear infinite;
+            z-index: 10;
+        }
+
+        @keyframes flowMove {
+            0% { transform: translateX(0) scale(0.8); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateX(200px) scale(1.2); opacity: 0; }
+        }
+
+        .stats-panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .stat-item {
+            margin: 8px 0;
+            font-size: 0.9rem;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: blink 2s infinite;
+        }
+
+        .status-online { background: #00ff88; }
+        .status-processing { background: #ffaa00; }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="title">DEX Routing System Architecture</h1>
+        
+        <!-- Layer 1: Client -->
+        <div class="system-layer layer-1">
+            <div class="component-group">
+                <div class="group-title">Client Layer</div>
+                <div class="component client" data-component="client">Client Request</div>
+                <div class="component client" data-component="response">Client Response</div>
+                <div class="component client" data-component="update">Client Update</div>
+            </div>
+        </div>
+
+        <!-- Layer 2: Fastify Server -->
+        <div class="system-layer layer-2">
+            <div class="component-group">
+                <div class="group-title">Fastify Server</div>
+                <div class="component server" data-component="fastify">Fastify Server</div>
+                <div class="component server" data-component="order-manager">Order Manager</div>
+                <div class="component server" data-component="order-id">Order ID</div>
+                <div class="component server" data-component="order-state">Order State</div>
+                <div class="component server" data-component="websocket">WebSocket</div>
+            </div>
+        </div>
+
+        <!-- Layer 3: Queue Manager -->
+        <div class="system-layer layer-3">
+            <div class="component-group">
+                <div class="group-title">Queue Manager</div>
+                <div class="component queue" data-component="queue-manager">Queue Manager</div>
+            </div>
+            <div class="component-group">
+                <div class="group-title">DEX Queues</div>
+                <div class="component queue" data-component="raydium-queue">Raydium Queue</div>
+                <div class="component queue" data-component="meteora-queue">Meteora Queue</div>
+                <div class="component queue" data-component="orca-queue">Orca Queue</div>
+                <div class="component queue" data-component="jupiter-queue">Jupiter Queue</div>
+                <div class="component queue" data-component="swap-queue">Swap Queue</div>
+            </div>
+        </div>
+
+        <!-- Layer 4: Workers -->
+        <div class="system-layer layer-4">
+            <div class="component-group">
+                <div class="group-title">Worker System</div>
+                <div class="component worker" data-component="raydium-worker">Raydium Worker</div>
+                <div class="component worker" data-component="meteora-worker">Meteora Worker</div>
+                <div class="component worker" data-component="orca-worker">Orca Worker</div>
+                <div class="component worker" data-component="jupiter-worker">Jupiter Worker</div>
+                <div class="component worker" data-component="swap-worker">Swap Worker</div>
+            </div>
+            <div class="component-group">
+                <div class="group-title">Routing Hub</div>
+                <div class="component hub" data-component="routing-hub">DEX Routing Hub</div>
+                <div class="component hub" data-component="quote-validator">Quote Validator</div>
+                <div class="component hub" data-component="quote-comparator">Quote Comparator</div>
+                <div class="component hub" data-component="route-analyzer">Route Analyzer</div>
+                <div class="component hub" data-component="route-selector">Route Selector</div>
+            </div>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="stats-panel">
+            <div class="stat-item">
+                <span class="status-indicator status-online"></span>
+                System Status: Online
+            </div>
+            <div class="stat-item">
+                <span class="status-indicator status-processing"></span>
+                Active Orders: <span id="active-orders">3</span>
+            </div>
+            <div class="stat-item">
+                <span class="status-indicator status-online"></span>
+                DEX Workers: <span id="active-workers">4/4</span>
+            </div>
+            <div class="stat-item">
+                <span class="status-indicator status-processing"></span>
+                Queue Size: <span id="queue-size">12</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Component interaction and animation system
+        const components = document.querySelectorAll('.component');
+        const stats = {
+            activeOrders: document.getElementById('active-orders'),
+            activeWorkers: document.getElementById('active-workers'),
+            queueSize: document.getElementById('queue-size')
+        };
+
+        let orderCount = 3;
+        let queueCount = 12;
+
+        // Component flow simulation
+        const flowSequence = [
+            'client', 'fastify', 'order-manager', 'queue-manager',
+            'raydium-queue', 'meteora-queue', 'orca-queue', 'jupiter-queue',
+            'raydium-worker', 'meteora-worker', 'orca-worker', 'jupiter-worker',
+            'routing-hub', 'quote-validator', 'quote-comparator', 'route-analyzer',
+            'route-selector', 'swap-queue', 'swap-worker', 'websocket', 'update'
+        ];
+
+        let currentStep = 0;
+
+        // Add click events to components
+        components.forEach(component => {
+            component.addEventListener('click', () => {
+                component.classList.toggle('active');
+                
+                // Simulate processing
+                if (component.dataset.component.includes('worker')) {
+                    simulateWorkerActivity(component);
+                }
+            });
+
+            // Hover effects
+            component.addEventListener('mouseenter', () => {
+                showComponentInfo(component);
+            });
+        });
+
+        function simulateWorkerActivity(worker) {
+            worker.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)';
+            
+            setTimeout(() => {
+                worker.style.background = 'linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%)';
+                updateStats();
+            }, 2000);
+        }
+
+        function showComponentInfo(component) {
+            const info = getComponentInfo(component.dataset.component);
+            component.title = info;
+        }
+
+        function getComponentInfo(componentType) {
+            const infos = {
+                'client': 'Initiates swap requests and receives updates',
+                'fastify': 'Main server handling HTTP requests',
+                'order-manager': 'Manages order lifecycle and state',
+                'queue-manager': 'Distributes jobs across DEX queues',
+                'raydium-worker': 'Processes Raydium DEX quotes',
+                'meteora-worker': 'Processes Meteora DEX quotes',
+                'orca-worker': 'Processes Orca DEX quotes',
+                'jupiter-worker': 'Processes Jupiter aggregator quotes',
+                'routing-hub': 'Analyzes and selects optimal routes',
+                'swap-worker': 'Executes the final swap transaction'
+            };
+            return infos[componentType] || 'System component';
+        }
+
+        function updateStats() {
+            orderCount = Math.max(1, orderCount + Math.floor(Math.random() * 3) - 1);
+            queueCount = Math.max(0, queueCount + Math.floor(Math.random() * 5) - 2);
+            
+            stats.activeOrders.textContent = orderCount;
+            stats.queueSize.textContent = queueCount;
+        }
+
+        // Simulate system activity
+        function simulateFlow() {
+            // Reset all components
+            components.forEach(comp => comp.classList.remove('active'));
+            
+            // Activate components in sequence
+            flowSequence.forEach((componentId, index) => {
+                setTimeout(() => {
+                    const component = document.querySelector(`[data-component="${componentId}"]`);
+                    if (component) {
+                        component.classList.add('active');
+                        
+                        // Remove active state after a delay
+                        setTimeout(() => {
+                            component.classList.remove('active');
+                        }, 1500);
+                    }
+                }, index * 300);
+            });
+        }
+
+        // Auto-simulate flow every 10 seconds
+        setInterval(simulateFlow, 10000);
+        
+        // Update stats periodically
+        setInterval(updateStats, 3000);
+
+        // Initial flow simulation
+        setTimeout(simulateFlow, 1000);
+
+        // Add random flow indicators
+        function createFlowIndicator() {
+            const indicator = document.createElement('div');
+            indicator.className = 'flow-indicator';
+            indicator.style.left = Math.random() * (window.innerWidth - 100) + 'px';
+            indicator.style.top = Math.random() * (window.innerHeight - 100) + 200 + 'px';
+            
+            document.body.appendChild(indicator);
+            
+            setTimeout(() => {
+                indicator.remove();
+            }, 3000);
+        }
+
+        setInterval(createFlowIndicator, 2000);
+    </script>
+</body>
+</html>
