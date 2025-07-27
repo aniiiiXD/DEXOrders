@@ -19,6 +19,35 @@ const connection = new IORedis("redis://localhost:6379", {
   maxRetriesPerRequest: null,
 });
 
+// ========== ENHANCED LOGGING UTILITIES ==========
+
+const logger = {
+  info: (message, data = {}) => {
+    console.log(`[INFO] ${new Date().toISOString()} - ${message}`, 
+      Object.keys(data).length > 0 ? JSON.stringify(data, null, 2) : '');
+  },
+  
+  error: (message, error = null, data = {}) => {
+    console.error(`[ERROR] ${new Date().toISOString()} - ${message}`);
+    if (error) {
+      console.error(`[ERROR] Stack: ${error.stack}`);
+    }
+    if (Object.keys(data).length > 0) {
+      console.error(`[ERROR] Data:`, JSON.stringify(data, null, 2));
+    }
+  },
+  
+  warn: (message, data = {}) => {
+    console.warn(`[WARN] ${new Date().toISOString()} - ${message}`, 
+      Object.keys(data).length > 0 ? JSON.stringify(data, null, 2) : '');
+  },
+  
+  debug: (message, data = {}) => {
+    console.log(`[DEBUG] ${new Date().toISOString()} - ${message}`, 
+      Object.keys(data).length > 0 ? JSON.stringify(data, null, 2) : '');
+  }
+};
+
 // ========== STATUS TRACKING UTILITIES ==========
 
 /**
@@ -46,111 +75,25 @@ function emitStatusUpdate(orderId, status, data = {}) {
   // Emit custom event that server can listen to
   process.emit('orderStatusUpdate', statusUpdate);
   
-  // Also log for debugging
-  console.log(`📊 [${orderId}] Status: ${status.toUpperCase()}`, data.message || '');
+  // Enhanced logging
+  logger.debug(`Status update emitted for order ${orderId}`, {
+    status: status.toUpperCase(),
+    message: data.message || '',
+    operation: data.operation || 'unknown'
+  });
 }
 
-/**
- * Enhanced worker event listeners with status tracking
- */
-const addWorkerEventListeners = (worker, dexName) => {
-  worker.on('active', job => {
-    const orderId = job.data.orderId;
-    console.log(`${dexName} worker started processing job ${job.id} (${job.data.operation})`);
-    
-    if (job.data.operation === 'quote') {
-      emitStatusUpdate(orderId, 'routing', {
-        message: `Getting quote from ${dexName}...`,
-        dex: dexName,
-        operation: 'quote'
-      });
-    } else if (job.data.operation === 'swap') {
-      emitStatusUpdate(orderId, 'building', {
-        message: `Building transaction on ${dexName}...`,
-        dex: dexName,
-        operation: 'swap'
-      });
-    }
-  });
-
-  worker.on('completed', (job, result) => {
-    const orderId = job.data.orderId;
-    console.log(`${dexName} worker completed job ${job.id}:`, inspect(result, { depth: 2 }));
-    
-    if (job.data.operation === 'quote') {
-      emitStatusUpdate(orderId, 'routing', {
-        message: `Quote received from ${dexName}`,
-        dex: dexName,
-        quote: result,
-        operation: 'quote_completed'
-      });
-    } else if (job.data.operation === 'swap') {
-      if (result.success) {
-        emitStatusUpdate(orderId, 'submitted', {
-          message: `Transaction submitted on ${dexName}`,
-          dex: dexName,
-          transactionHash: result.transactionHash,
-          operation: 'swap_submitted'
-        });
-        
-        // Simulate network confirmation delay
-        setTimeout(() => {
-          emitStatusUpdate(orderId, 'confirmed', {
-            message: `Transaction confirmed on ${dexName}`,
-            dex: dexName,
-            transactionHash: result.transactionHash,
-            result: result,
-            operation: 'swap_confirmed'
-          });
-        }, 1000); // 1 second delay to simulate network confirmation
-      }
-    }
-  });
-
-  worker.on('failed', (job, err) => {
-    const orderId = job.data.orderId;
-    console.error(`${dexName} worker failed job ${job.id}:`, err.message);
-    
-    emitStatusUpdate(orderId, 'failed', {
-      message: `${job.data.operation} failed on ${dexName}: ${err.message}`,
-      dex: dexName,
-      error: err.message,
-      operation: job.data.operation
-    });
-  });
-
-  worker.on('error', (err) => {
-    console.error(`${dexName} worker error:`, err);
-  });
-
-  worker.on('progress', (job, progress) => {
-    const orderId = job.data.orderId;
-    console.log(`${dexName} worker job ${job.id} progress:`, progress);
-    
-    // Emit progress updates for better UX
-    if (job.data.operation === 'quote' && progress === 25) {
-      emitStatusUpdate(orderId, 'routing', {
-        message: `Processing quote on ${dexName}...`,
-        dex: dexName,
-        progress: progress
-      });
-    } else if (job.data.operation === 'swap' && progress === 25) {
-      emitStatusUpdate(orderId, 'building', {
-        message: `Preparing transaction on ${dexName}...`,
-        dex: dexName,
-        progress: progress
-      });
-    }
-  });
-};
-
-// ========== ENHANCED WORKERS WITH STATUS TRACKING ==========
+// ========== ENHANCED WORKERS ==========
 
 // Raydium worker
 const raydiumWorker = new Worker('raydium-dex', async job => {
   const { operation, tokenPair, inputAmount, wallet, orderId } = job.data;
   
-  console.log(`Raydium worker processing ${operation} for ${tokenPair.base}/${tokenPair.quote}`);
+  logger.info(`Raydium worker processing ${operation}`, {
+    orderId,
+    tokenPair: `${tokenPair.base}/${tokenPair.quote}`,
+    inputAmount
+  });
   
   try {
     if (operation === 'quote') {
@@ -164,9 +107,9 @@ const raydiumWorker = new Worker('raydium-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Raydium ${operation} delay: ${delay}ms`);
+      logger.debug(`Raydium ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await raydiumQuote(tokenPair, inputAmount);
@@ -174,6 +117,12 @@ const raydiumWorker = new Worker('raydium-dex', async job => {
       
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
+      
+      logger.info(`Raydium quote completed`, {
+        orderId,
+        outputAmount: result.outputAmount,
+        priceImpact: result.priceImpact
+      });
       
       return result;
     } else if (operation === 'swap') {
@@ -187,9 +136,9 @@ const raydiumWorker = new Worker('raydium-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Raydium ${operation} delay: ${delay}ms`);
+      logger.debug(`Raydium ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await raydiumSwap(tokenPair, inputAmount, wallet);
@@ -198,12 +147,18 @@ const raydiumWorker = new Worker('raydium-dex', async job => {
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
       
+      logger.info(`Raydium swap completed`, {
+        orderId,
+        success: result.success,
+        transactionHash: result.transactionHash
+      });
+      
       return result;
     } else {
       throw new Error(`Unknown operation: ${operation}`);
     }
   } catch (error) {
-    console.error(`Raydium worker error for ${operation}:`, error.message);
+    logger.error(`Raydium worker error for ${operation}`, error, { orderId });
     throw error;
   }
 }, { connection });
@@ -212,7 +167,11 @@ const raydiumWorker = new Worker('raydium-dex', async job => {
 const meteoraWorker = new Worker('meteora-dex', async job => {
   const { operation, tokenPair, inputAmount, wallet, orderId } = job.data;
   
-  console.log(`Meteora worker processing ${operation} for ${tokenPair.base}/${tokenPair.quote}`);
+  logger.info(`Meteora worker processing ${operation}`, {
+    orderId,
+    tokenPair: `${tokenPair.base}/${tokenPair.quote}`,
+    inputAmount
+  });
   
   try {
     if (operation === 'quote') {
@@ -226,9 +185,9 @@ const meteoraWorker = new Worker('meteora-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Meteora ${operation} delay: ${delay}ms`);
+      logger.debug(`Meteora ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await meteoraQuote(tokenPair, inputAmount);
@@ -236,6 +195,12 @@ const meteoraWorker = new Worker('meteora-dex', async job => {
       
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
+      
+      logger.info(`Meteora quote completed`, {
+        orderId,
+        outputAmount: result.outputAmount,
+        priceImpact: result.priceImpact
+      });
       
       return result;
     } else if (operation === 'swap') {
@@ -249,9 +214,9 @@ const meteoraWorker = new Worker('meteora-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Meteora ${operation} delay: ${delay}ms`);
+      logger.debug(`Meteora ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await meteoraSwap(tokenPair, inputAmount, wallet);
@@ -260,12 +225,18 @@ const meteoraWorker = new Worker('meteora-dex', async job => {
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
       
+      logger.info(`Meteora swap completed`, {
+        orderId,
+        success: result.success,
+        transactionHash: result.transactionHash
+      });
+      
       return result;
     } else {
       throw new Error(`Unknown operation: ${operation}`);
     }
   } catch (error) {
-    console.error(`Meteora worker error for ${operation}:`, error.message);
+    logger.error(`Meteora worker error for ${operation}`, error, { orderId });
     throw error;
   }
 }, { connection });
@@ -274,7 +245,11 @@ const meteoraWorker = new Worker('meteora-dex', async job => {
 const orcaWorker = new Worker('orca-dex', async job => {
   const { operation, tokenPair, inputAmount, wallet, orderId } = job.data;
   
-  console.log(`Orca worker processing ${operation} for ${tokenPair.base}/${tokenPair.quote}`);
+  logger.info(`Orca worker processing ${operation}`, {
+    orderId,
+    tokenPair: `${tokenPair.base}/${tokenPair.quote}`,
+    inputAmount
+  });
   
   try {
     if (operation === 'quote') {
@@ -288,9 +263,9 @@ const orcaWorker = new Worker('orca-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Orca ${operation} delay: ${delay}ms`);
+      logger.debug(`Orca ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await orcaQuote(tokenPair, inputAmount);
@@ -298,6 +273,12 @@ const orcaWorker = new Worker('orca-dex', async job => {
       
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
+      
+      logger.info(`Orca quote completed`, {
+        orderId,
+        outputAmount: result.outputAmount,
+        priceImpact: result.priceImpact
+      });
       
       return result;
     } else if (operation === 'swap') {
@@ -311,9 +292,9 @@ const orcaWorker = new Worker('orca-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Orca ${operation} delay: ${delay}ms`);
+      logger.debug(`Orca ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await orcaSwap(tokenPair, inputAmount, wallet);
@@ -322,12 +303,18 @@ const orcaWorker = new Worker('orca-dex', async job => {
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
       
+      logger.info(`Orca swap completed`, {
+        orderId,
+        success: result.success,
+        transactionHash: result.transactionHash
+      });
+      
       return result;
     } else {
       throw new Error(`Unknown operation: ${operation}`);
     }
   } catch (error) {
-    console.error(`Orca worker error for ${operation}:`, error.message);
+    logger.error(`Orca worker error for ${operation}`, error, { orderId });
     throw error;
   }
 }, { connection });
@@ -336,7 +323,11 @@ const orcaWorker = new Worker('orca-dex', async job => {
 const jupiterWorker = new Worker('jupiter-dex', async job => {
   const { operation, tokenPair, inputAmount, wallet, orderId } = job.data;
   
-  console.log(`Jupiter worker processing ${operation} for ${tokenPair.base}/${tokenPair.quote}`);
+  logger.info(`Jupiter worker processing ${operation}`, {
+    orderId,
+    tokenPair: `${tokenPair.base}/${tokenPair.quote}`,
+    inputAmount
+  });
   
   try {
     if (operation === 'quote') {
@@ -350,9 +341,9 @@ const jupiterWorker = new Worker('jupiter-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Jupiter ${operation} delay: ${delay}ms`);
+      logger.debug(`Jupiter ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await jupiterQuote(tokenPair, inputAmount);
@@ -360,6 +351,12 @@ const jupiterWorker = new Worker('jupiter-dex', async job => {
       
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
+      
+      logger.info(`Jupiter quote completed`, {
+        orderId,
+        outputAmount: result.outputAmount,
+        priceImpact: result.priceImpact
+      });
       
       return result;
     } else if (operation === 'swap') {
@@ -373,9 +370,9 @@ const jupiterWorker = new Worker('jupiter-dex', async job => {
       
       // Generate a single random delay between 2-5 seconds for this operation
       const delay = Math.random() * 3000 + 2000;
-      console.log(`Jupiter ${operation} delay: ${delay}ms`);
+      logger.debug(`Jupiter ${operation} processing delay: ${delay}ms`, { orderId });
       
-      await job.updateProgress(25);
+      await job.updateProgress(50);
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // First half
       
       const result = await jupiterSwap(tokenPair, inputAmount, wallet);
@@ -384,28 +381,89 @@ const jupiterWorker = new Worker('jupiter-dex', async job => {
       await new Promise(resolve => setTimeout(resolve, delay / 2)); // Second half
       await job.updateProgress(100);
       
+      logger.info(`Jupiter swap completed`, {
+        orderId,
+        success: result.success,
+        transactionHash: result.transactionHash
+      });
+      
       return result;
     } else {
       throw new Error(`Unknown operation: ${operation}`);
     }
   } catch (error) {
-    console.error(`Jupiter worker error for ${operation}:`, error.message);
+    logger.error(`Jupiter worker error for ${operation}`, error, { orderId });
     throw error;
   }
 }, { connection });
 
-// Add event listeners for all workers
-addWorkerEventListeners(raydiumWorker, 'Raydium');
-addWorkerEventListeners(meteoraWorker, 'Meteora');
-addWorkerEventListeners(orcaWorker, 'Orca');
-addWorkerEventListeners(jupiterWorker, 'Jupiter');
+// ========== WORKER ERROR HANDLING ==========
 
-console.log('🚀 All DEX workers are ready and listening for jobs...');
+// Add basic error handlers for each worker
+raydiumWorker.on('error', (err) => {
+  logger.error('Raydium worker error', err);
+});
+
+meteoraWorker.on('error', (err) => {
+  logger.error('Meteora worker error', err);
+});
+
+orcaWorker.on('error', (err) => {
+  logger.error('Orca worker error', err);
+});
+
+jupiterWorker.on('error', (err) => {
+  logger.error('Jupiter worker error', err);
+});
+
+// ========== GRACEFUL SHUTDOWN ==========
+
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down workers gracefully');
+  
+  try {
+    await Promise.all([
+      raydiumWorker.close(),
+      meteoraWorker.close(),
+      orcaWorker.close(),
+      jupiterWorker.close()
+    ]);
+    
+    await connection.quit();
+    logger.info('All workers and connections closed successfully');
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during worker shutdown', error);
+    process.exit(1);
+  }
+});
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down workers gracefully');
+  
+  try {
+    await Promise.all([
+      raydiumWorker.close(),
+      meteoraWorker.close(),
+      orcaWorker.close(),
+      jupiterWorker.close()
+    ]);
+    
+    await connection.quit();
+    logger.info('All workers and connections closed successfully');
+    process.exit(0);
+  } catch (error) {
+    logger.error('Error during worker shutdown', error);
+    process.exit(1);
+  }
+});
+
+logger.info('🚀 All DEX workers are ready and listening for jobs...');
 
 module.exports = {
   raydiumWorker,
   meteoraWorker,
   orcaWorker,
   jupiterWorker,
-  emitStatusUpdate // Export for server to use
+  emitStatusUpdate
 };

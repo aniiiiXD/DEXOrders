@@ -104,7 +104,7 @@ async function addSwapJob(dexProvider, tokenPair, inputAmount, wallet, orderId) 
     }
 
     console.log(`Adding swap job for ${dexProvider}: ${inputAmount} ${tokenPair.base} -> ${tokenPair.quote} (Order: ${orderId})`);
-    const job = await queue.add('perform-swap', {
+    const job = await queue.add('swap', {  // Changed from 'perform-swap' to 'swap'
       operation: 'swap',
       dexProvider,
       tokenPair,

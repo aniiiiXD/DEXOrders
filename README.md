@@ -165,6 +165,80 @@ module.exports = {
 };
 ```
 
+
+# **🎯 DEX Routing Hub -Route Selection**
+
+## **Quote Representation**
+
+Each DEX quote is represented as a **tuple**:
+```
+qi = (Pi, Oi, Si, Li, Di)
+```
+Where:
+- **Pi**: Price per token
+- **Oi**: Output amount (tokens received)
+- **Si**: Slippage (price impact %)
+- **Li**: Liquidity (pool depth)
+- **Di**: DEX provider identifier
+
+## **Routing Strategy Objective Functions**
+
+Given quote set **Q = {q1, q2, ..., qn}**, each strategy optimizes:
+
+### **1. Best Price Strategy**
+```javascript
+argmax(Oi) for qi ∈ Q
+// Selects quote with maximum output amount
+```
+
+### **2. Lowest Slippage Strategy**
+```javascript
+argmin(Si) for qi ∈ Q
+// Selects quote with minimum price impact
+```
+
+### **3. Highest Liquidity Strategy**
+```javascript
+argmax(Li) for qi ∈ Q
+// Selects quote with maximum pool liquidity
+```
+
+### **4. Fastest Execution Strategy**
+```javascript
+argmax(speed_rank(Di)) for qi ∈ Q
+// Selects based on predefined DEX speed rankings
+```
+
+## **Selection Process Flow**
+
+1. **Quote Collection**: Gather Q from 4 DEX workers in parallel
+2. **Validation**: Ensure all tuples have valid (Pi, Oi, Si, Li, Di)
+3. **Strategy Application**: Apply chosen objective function to Q
+4. **Filter Application**: Remove quotes violating user constraints
+5. **Route Selection**: Return optimal qi based on strategy
+6. **WebSocket Broadcast**: Send selected route + analysis to client
+
+## **Implementation**
+
+```javascript
+selectBestRoute(quotes, strategy) {
+  // Convert quotes to tuples: (Pi, Oi, Si, Li, Di)
+  const Q = quotes.map(q => [q.price, q.outputAmount, q.priceImpact, q.liquidity, q.provider]);
+  
+  // Apply objective function based on strategy
+  const objectiveFunctions = {
+    'BEST_PRICE': (tuples) => tuples.reduce((best, current) => current[1] > best[1] ? current : best),
+    'LOWEST_SLIPPAGE': (tuples) => tuples.reduce((best, current) => current[2]  tuples.reduce((best, current) => current[3] > best[3] ? current : best),
+    'FASTEST_EXECUTION': (tuples) => tuples.reduce((best, current) => speedRank[current[4]] > speedRank[best[4]] ? current : best)
+  };
+  
+  return objectiveFunctions[strategy](Q);
+}
+```
+
+**Result**: Single optimal tuple qi* selected from Q and executed via targeted DEX worker with real-time WebSocket updates.
+
+
 ## Example Usage Function  
 
 ```js
@@ -324,3 +398,97 @@ async function addSwapJob(dexProvider, tokenPair, inputAmount, wallet, orderId) 
 - ✅ **Scalable Architecture**: Redis-backed queues support distributed deployment
 
 This implementation enables **real-time order tracking** with **parallel quote fetching** and **targeted swap execution** while maintaining robust error handling and status broadcasting capabilities.
+
+
+
+Here's a simple visual representation of the system architecture showing the relationships between Hub, Server, Swaps, Sockets, and Workers:
+
+```mermaid
+graph TB
+    Client[👤 Client]
+    Server[🚀 Fastify Server]
+    Hub[🎯 DEX Routing Hub] 
+    WS[🔌 WebSocket]
+    Redis[(📊 Redis Queue)]
+    
+    subgraph Workers ["⚙️ DEX Workers"]
+        RW[Raydium Worker]
+        MW[Meteora Worker] 
+        OW[Orca Worker]
+        JW[Jupiter Worker]
+    end
+    
+    subgraph Swaps ["💱 Swap Operations"]
+        RSwap[Raydium Swap]
+        MSwap[Meteora Swap]
+        OSwap[Orca Swap] 
+        JSwap[Jupiter Swap]
+    end
+
+    %% Main Flow
+    Client -->|1. POST /api/orders| Server
+    Server -->|2. Create WebSocket| WS
+    Server -->|3. Add quote jobs| Redis
+    Redis -->|4. Distribute jobs| Workers
+    Workers -->|5. Fetch quotes| Server
+    Server -->|6. Send quotes| Hub
+    Hub -->|7. Select best route| Server
+    Server -->|8. Route decision| WS
+    WS -->|9. Real-time updates| Client
+    Server -->|10. Execute swap| Redis
+    Redis -->|11. Swap job| Workers
+    Workers -->|12. Perform swap| Swaps
+    Swaps -->|13. Transaction result| Workers
+    Workers -->|14. Status updates| WS
+    WS -->|15. Final result| Client
+
+    %% Styling
+    classDef server fill:#e1f5fe
+    classDef hub fill:#f3e5f5  
+    classDef workers fill:#e8f5e8
+    classDef swaps fill:#fff3e0
+    classDef websocket fill:#fce4ec
+    
+    class Server server
+    class Hub hub
+    class RW,MW,OW,JW workers
+    class RSwap,MSwap,OSwap,JSwap swaps
+    class WS websocket
+```
+
+## **🔄 Simple Flow Diagram**
+
+```
+Client Request
+    ↓
+Server (Fastify)
+    ↓
+WebSocket Connection ←→ Real-time Updates
+    ↓
+Redis Queue System
+    ↓
+4 DEX Workers (Parallel)
+    ↓
+DEX Routing Hub
+    ↓
+Selected DEX Worker
+    ↓
+Swap Execution
+    ↓
+WebSocket Updates
+    ↓
+Client Response
+```
+
+## **📊 Component Interactions**
+
+| Component | Role | Connects To |
+|-----------|------|-------------|
+| **Server** | API endpoints, orchestration | Hub, WebSocket, Redis |
+| **Hub** | Route selection logic | Server (receives quotes, returns best route) |
+| **WebSocket** | Real-time updates | Server ↔ Client |
+| **Workers** | DEX operations | Redis ← Server, Swaps → DEX APIs |
+| **Swaps** | Actual transactions | Individual DEX protocols |
+| **Redis** | Job queue management | Server ↔ Workers |
+
+**Key**: Server orchestrates everything, Hub makes routing decisions, Workers execute operations, WebSocket provides real-time feedback, and Redis manages job distribution.
