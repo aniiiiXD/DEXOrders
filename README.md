@@ -193,4 +193,121 @@ module.exports = {
 })();
 ```
 
+
+
 This mock DEX abstraction provides a lightweight testbed for building routing logic, UI prototypes, or experimenting with multi-DEX quote comparison without requiring access to live wallets or Solana nodes.
+
+Based on your worker and queue implementation, here's a concise documentation section:
+
+# **🔄 Queue and Worker Architecture Implementation**
+
+## **Queue Infrastructure**
+```javascript
+// Separate Redis-backed queues for each DEX provider
+const raydiumQueue = new Queue('raydium-dex', { connection });
+const meteoraQueue = new Queue('meteora-dex', { connection });
+const orcaQueue = new Queue('orca-dex', { connection });
+const jupiterQueue = new Queue('jupiter-dex', { connection });
+```
+
+## **Worker Implementation with Real-Time Status Updates**
+
+### **Parallel Quote Processing**
+Each DEX worker processes quote and swap operations independently with progress tracking:
+
+```javascript
+const raydiumWorker = new Worker('raydium-dex', async job => {
+  const { operation, tokenPair, inputAmount, orderId } = job.data;
+  
+  if (operation === 'quote') {
+    // Emit real-time status updates via process events
+    emitStatusUpdate(orderId, 'routing', {
+      message: 'Fetching Raydium liquidity data...',
+      dex: 'Raydium'
+    });
+    
+    // Random delay simulation (2-5 seconds)
+    const delay = Math.random() * 3000 + 2000;
+    await job.updateProgress(25);
+    
+    const result = await raydiumQuote(tokenPair, inputAmount);
+    await job.updateProgress(100);
+    
+    return result;
+  }
+}, { connection });
+```
+
+### **Status Broadcasting System**
+```javascript
+// Worker events automatically trigger WebSocket updates
+function emitStatusUpdate(orderId, status, data = {}) {
+  const statusUpdate = {
+    orderId,
+    status,
+    timestamp: new Date().toISOString(),
+    ...data
+  };
+  
+  // Emit to server for WebSocket distribution
+  process.emit('orderStatusUpdate', statusUpdate);
+}
+```
+
+## **Job Queue Operations**
+
+### **Concurrent Quote Fetching**
+```javascript
+async function addCompareQuotesJob(tokenPair, inputAmount, orderId) {
+  // Launch all DEX quote jobs simultaneously
+  const jobs = await Promise.all([
+    addQuoteJob('RAYDIUM', tokenPair, inputAmount, orderId),
+    addQuoteJob('METEORA', tokenPair, inputAmount, orderId),
+    addQuoteJob('ORCA', tokenPair, inputAmount, orderId),
+    addQuoteJob('JUPITER', tokenPair, inputAmount, orderId)
+  ]);
+  
+  return jobs; // 4 parallel jobs for optimal speed
+}
+```
+
+### **Targeted Swap Execution**
+```javascript
+async function addSwapJob(dexProvider, tokenPair, inputAmount, wallet, orderId) {
+  const queueMap = {
+    'Raydium': raydiumQueue,
+    'Meteora': meteoraQueue,
+    'Orca': orcaQueue,
+    'Jupiter': jupiterQueue
+  };
+  
+  // Execute on selected DEX only
+  const queue = queueMap[dexProvider];
+  return await queue.add('perform-swap', {
+    operation: 'swap',
+    tokenPair,
+    inputAmount,
+    wallet,
+    orderId
+  });
+}
+```
+
+## **Event-Driven Status Flow**
+```
+1. Job Added → Queue
+2. Worker Starts → emitStatusUpdate('routing')
+3. Progress Updates → emitStatusUpdate('building')
+4. Job Complete → emitStatusUpdate('submitted')
+5. Confirmation → emitStatusUpdate('confirmed')
+6. Server Receives → WebSocket Broadcast
+```
+
+## **Key Features**
+- ✅ **Parallel Processing**: 4 DEX workers run quotes simultaneously
+- ✅ **Real-Time Updates**: Progress tracking with WebSocket notifications
+- ✅ **Error Handling**: Automatic retries with exponential backoff
+- ✅ **Status Broadcasting**: Process events bridge workers to WebSocket clients
+- ✅ **Scalable Architecture**: Redis-backed queues support distributed deployment
+
+This implementation enables **real-time order tracking** with **parallel quote fetching** and **targeted swap execution** while maintaining robust error handling and status broadcasting capabilities.
