@@ -4,6 +4,38 @@
 This server demonstrates a multi-provider DEX routing and swap execution setup using **mocked DEX implementations** for Raydium, Meteora, Orca, and Jupiter. The core logic simulates fetching quotes and executing swaps without requiring real Solana RPC connections, wallets, or signing logic.
 
 **⚠️ Important:**  
+
+## **🎯 Design Decisions**
+
+- **Parallel Quote Processing**: 
+  - 4 DEX workers process quotes simultaneously
+  - Each worker handles specific DEX operations independently
+  - Reduces quote collection time significantly
+
+- **Real-Time Updates Architecture**:
+  - WebSocket connections maintain persistent client-server communication
+  - Process events bridge workers to WebSocket clients
+  - Status updates broadcasted in real-time
+  - Progress tracking at each stage of the trade
+
+- **Smart Routing System**:
+  - DEX Routing Hub selects optimal route based on strategy
+  - Multiple objective functions for different optimization goals
+  - Real-time price impact and liquidity analysis
+  - User preference-based route filtering
+
+- **Error Handling & Recovery**:
+  - Automatic retries with exponential backoff
+  - Graceful degradation for failed quotes
+  - Order state preservation during failures
+  - Detailed error logging and reporting
+
+- **Scalable Infrastructure**:
+  - Redis-backed job queues for distributed processing
+  - Worker-based architecture for horizontal scaling
+
+## **Overview**
+
 The DEX abstraction provided here is entirely *mocked*. There is no real blockchain interaction, no wallet signing, and no network RPC calls. This allows for easy local development, testing, and experimentation without infrastructure dependencies.
 
 ## Table of Contents  
@@ -380,93 +412,45 @@ async function addSwapJob(dexProvider, tokenPair, inputAmount, wallet, orderId) 
 }
 ```
 
-## **Event-Driven Status Flow**
-```
-1. Job Added → Queue
-2. Worker Starts → emitStatusUpdate('routing')
-3. Progress Updates → emitStatusUpdate('building')
-4. Job Complete → emitStatusUpdate('submitted')
-5. Confirmation → emitStatusUpdate('confirmed')
-6. Server Receives → WebSocket Broadcast
-```
+## **Example Usage Function**
 
-## **Key Features**
-- ✅ **Parallel Processing**: 4 DEX workers run quotes simultaneously
-- ✅ **Real-Time Updates**: Progress tracking with WebSocket notifications
-- ✅ **Error Handling**: Automatic retries with exponential backoff
-- ✅ **Status Broadcasting**: Process events bridge workers to WebSocket clients
-- ✅ **Scalable Architecture**: Redis-backed queues support distributed deployment
+```javascript
+(async function example() {
+  const wallet = {
+    address: 'wallet123',
+    balances: {
+      SOL: 10.5,
+      USDC: 1000,
+      BONK: 5000000
+    }
+  };
 
-This implementation enables **real-time order tracking** with **parallel quote fetching** and **targeted swap execution** while maintaining robust error handling and status broadcasting capabilities.
+  const tokenPair = { base: 'SOL', quote: 'USDC' };
+  console.log('Fetching quotes...');
+  const quotes = await Promise.all([
+    raydiumQuote(tokenPair, 1),
+    meteoraQuote(tokenPair, 1),
+    orcaQuote(tokenPair, 1),
+    jupiterQuote(tokenPair, 1)
+  ]);
 
+  console.table(quotes.map(q => ({
+    Provider: q.provider,
+    OutputAmount: q.outputAmount,
+    Price: q.price,
+    Fee: q.fee,
+    PriceImpact: q.priceImpact + '%'
+  })));
 
+  console.log('Performing swap on Jupiter...');
+  const swapResult = await jupiterSwap(tokenPair, 1, wallet);
 
-Here's a simple visual representation of the system architecture showing the relationships between Hub, Server, Swaps, Sockets, and Workers:
-
-```mermaid
-graph TB
-    Client[👤 Client]
-    Server[🚀 Fastify Server]
-    Hub[🎯 DEX Routing Hub] 
-    WS[🔌 WebSocket]
-    Redis[(📊 Redis Queue)]
-    
-    subgraph Workers ["⚙️ DEX Workers"]
-        RW[Raydium Worker]
-        MW[Meteora Worker] 
-        OW[Orca Worker]
-        JW[Jupiter Worker]
-    end
-    
-    subgraph Swaps ["💱 Swap Operations"]
-        RSwap[Raydium Swap]
-        MSwap[Meteora Swap]
-        OSwap[Orca Swap] 
-        JSwap[Jupiter Swap]
-    end
-
-    %% Main Flow
-    Client -->|1. POST /api/orders| Server
-    Server -->|2. Create WebSocket| WS
-    Server -->|3. Add quote jobs| Redis
-    Redis -->|4. Distribute jobs| Workers
-    Workers -->|5. Fetch quotes| Server
-    Server -->|6. Send quotes| Hub
-    Hub -->|7. Select best route| Server
-    Server -->|8. Route decision| WS
-    WS -->|9. Real-time updates| Client
-    Server -->|10. Execute swap| Redis
-    Redis -->|11. Swap job| Workers
-    Workers -->|12. Perform swap| Swaps
-    Swaps -->|13. Transaction result| Workers
-    Workers -->|14. Status updates| WS
-    WS -->|15. Final result| Client
-
-    %% Styling
-    classDef server fill:#e1f5fe
-    classDef hub fill:#f3e5f5  
-    classDef workers fill:#e8f5e8
-    classDef swaps fill:#fff3e0
-    classDef websocket fill:#fce4ec
-    
-    class Server server
-    class Hub hub
-    class RW,MW,OW,JW workers
-    class RSwap,MSwap,OSwap,JSwap swaps
-    class WS websocket
-```
-
-## **🔄 Simple Flow Diagram**
-
-```
-Client Request
-    ↓
-Server (Fastify)
-    ↓
-WebSocket Connection ←→ Real-time Updates
-    ↓
-Redis Queue System
-    ↓
+  if (swapResult.success) {
+    console.log('Swap successful! Updated wallet:', swapResult.updatedWallet);
+  } else {
+    console.error('Swap failed:', swapResult.error);
+  }
+})();
 4 DEX Workers (Parallel)
     ↓
 DEX Routing Hub
