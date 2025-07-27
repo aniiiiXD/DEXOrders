@@ -31,6 +31,7 @@ The DEX abstraction provided here is entirely *mocked*. There is no real blockch
 - **Node.js ≥ 14**  
 - No blockchain connection or wallet is required  
 - The entire setup is local and in-memory  
+- A Running redis server 
 
 ## Getting Started  
 
@@ -54,6 +55,18 @@ The DEX abstraction provided here is entirely *mocked*. There is no real blockch
 
 5. **Failure Handling:**  
    Randomized failures simulate real-world conditions like slippage or routing failures.
+
+
+## Design Decisions 
+
+I have primarily used Hub , worker and queue architecture where hub contacts with server and processes things in queue and then a connections get setelled between websocket and the route so we can call the Router also . 
+
+I wanted to implement a graph like structure but it does not work good with javascript , i have alternative plan for making nodes as token , edges as quotes and paths as swap patterns in that way we can achieve all three things that are market order, limit order and sniper withing same data structure 
+
+
+
+Here we are handling things with some tuples directly with no hifi logic as of time issues , but i have explained everything in the loom video attached what i have done and what my upper vision is : 
+
 
 ## Mock DEX Implementations  
 
